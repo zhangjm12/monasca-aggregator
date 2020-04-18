@@ -15,7 +15,7 @@
 package aggregation
 
 import (
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/monasca/monasca-aggregator/models"
 	"time"
 	"fmt"
