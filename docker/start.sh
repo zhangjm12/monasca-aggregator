@@ -1,6 +1,6 @@
 #!/bin/sh
 
-python /template.py /config/config.yaml.j2 config.yaml
+python3 /template.py /config/config.yaml.j2 config.yaml
 
 # works around a recent Kubernetes issue where subpath mounts are broken
 # we need to mount the aggregation specifications configmap into its own
