@@ -15,15 +15,17 @@
 package aggregation
 
 import (
-	log "github.com/sirupsen/logrus"
-	"github.com/monasca/monasca-aggregator/models"
-	"time"
 	"fmt"
+	"time"
+
+	"github.com/monasca/monasca-aggregator/models"
+	log "github.com/sirupsen/logrus"
 )
 
 type Rule struct {
 	models.AggregationSpecification
 	MetricCache
+	LastWindow int64
 }
 
 func NewAggregationRule(aggSpec models.AggregationSpecification) (Rule, error) {
@@ -48,7 +50,12 @@ func NewAggregationRule(aggSpec models.AggregationSpecification) (Rule, error) {
 
 func (a *Rule) AddMetric(metricEnvelope models.MetricEnvelope, windowSize time.Duration) {
 	log.Debugf("Adding metric to %s", a.Name)
-	eventTime := int64(metricEnvelope.Metric.Timestamp / float64(1000*int64(windowSize.Seconds())))
+	var eventTime int64
+	if a.WindowSize > 0 {
+		eventTime = int64(metricEnvelope.Metric.Timestamp / float64(1000*int64(a.WindowSize)))
+	} else {
+		eventTime = int64(metricEnvelope.Metric.Timestamp / float64(1000*int64(windowSize.Seconds())))
+	}
 
 	_, exists := a.Windows[eventTime]
 	if !exists {
@@ -70,7 +77,11 @@ func (a *Rule) AddMetric(metricEnvelope models.MetricEnvelope, windowSize time.D
 	if !exists {
 		//TODO change create metric to handle new aggregation rule type
 		currentMetric = CreateMetricType(a.AggregationSpecification, metricEnvelope)
-		currentMetric.SetTimestamp(float64(eventTime * 1000 * int64(windowSize.Seconds())))
+		if a.WindowSize > 0 {
+			currentMetric.SetTimestamp(float64(eventTime * 1000 * int64(a.WindowSize)))
+		} else {
+			currentMetric.SetTimestamp(float64(eventTime * 1000 * int64(windowSize.Seconds())))
+		}
 	} else {
 		currentMetric.UpdateValue(metricEnvelope)
 	}

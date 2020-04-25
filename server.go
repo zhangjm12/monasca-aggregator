@@ -23,10 +23,10 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
 	"github.com/monasca/monasca-aggregator/aggregation"
@@ -50,6 +50,7 @@ var outCounter = prometheus.NewCounter(
 
 // This is a workaround to handle https://issues.apache.org/jira/browse/KAFKA-3593
 var lastMessage = time.Now()
+var lastEventTime int64
 
 var config = initConfig()
 var aggregations = initAggregationSpecs()
@@ -210,27 +211,61 @@ func firstTick() *time.Timer {
 }
 
 func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.Consumer) {
-	var currentTimeWindow = int64(time.Now().Unix()) / int64(windowSize.Seconds())
+	// var currentTimeWindow = int64(time.Now().Unix()) / int64(windowSize.Seconds())
+	var currentTimeWindow = lastEventTime
+
 	// roof(windowLag / windowSize) i.e. number of windows in the lag time
 	var windowLagCount = int64(windowLag.Seconds()/windowSize.Seconds()) + 1
 	var activeTimeWindow = currentTimeWindow - windowLagCount
 	log.Debugf("currentTimeWindow: %d", currentTimeWindow)
 	log.Debugf("Publishing metrics in window %d", activeTimeWindow)
 
-	for _, rule := range aggregationRules {
-	windowLoop:
+	for index, rule := range aggregationRules {
+		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, baseActiveTimeWindow int64
+		if rule.WindowSize > 0 {
+			// ruleCurrentTimeWindow = int64(time.Now().Unix()) / int64(rule.WindowSize)
+			ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
+			if rule.WindowLag > 0 {
+				ruleWindowLagCount = int64(rule.WindowLag/rule.WindowSize) + 1
+			} else {
+				ruleWindowLagCount = int64(float64(windowLag.Seconds())/float64(rule.WindowSize)) + 1
+			}
+		} else {
+			ruleCurrentTimeWindow = currentTimeWindow
+			ruleWindowLagCount = windowLagCount
+		}
+
+		ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount
+		if rule.WindowSize > 0 {
+			baseActiveTimeWindow = int64(float64(ruleCurrentTimeWindow)*float64(rule.WindowSize)/windowSize.Seconds()) - ruleWindowLagCount
+			if activeTimeWindow > baseActiveTimeWindow {
+				activeTimeWindow = baseActiveTimeWindow
+			}
+		}
+
+		if ruleCurrentTimeWindow <= rule.LastWindow {
+			continue
+		}
+
 		for windowTime := range rule.Windows {
-			if windowTime > activeTimeWindow {
-				continue windowLoop
+			if windowTime > ruleActiveTimeWindow {
+				continue
 			}
 
-			for _, metric := range rule.GetMetrics(windowTime) {
-				metric.CreationTime = time.Now().Unix() * 1000
-				value, _ := json.Marshal(metric)
+			lastWindowTime := rule.LastWindow
+			if windowTime > rule.LastWindow {
+				for _, metric := range rule.GetMetrics(windowTime) {
+					metric.CreationTime = time.Now().Unix() * 1000
+					value, _ := json.Marshal(metric)
 
-				outbound <- &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: topic, Partition: kafka.PartitionAny}, Value: []byte(value)}
-				outCounter.Inc()
+					outbound <- &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: topic, Partition: kafka.PartitionAny}, Value: []byte(value)}
+					outCounter.Inc()
+				}
+				if windowTime > lastWindowTime {
+					lastWindowTime = windowTime
+				}
 			}
+			aggregationRules[index].LastWindow = lastWindowTime
 		}
 	}
 
@@ -329,6 +364,11 @@ func processMessage(e *kafka.Message) {
 
 	inCounter.Inc()
 	lastMessage = time.Now()
+
+	if eventTime > lastEventTime {
+		lastEventTime = eventTime
+	}
+
 }
 
 // TODO: Add validation for aggregation rules (and metrics?)

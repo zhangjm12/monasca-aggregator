@@ -23,9 +23,15 @@ type AggregationSpecification struct {
 	GroupedDimensions    []string
 	AggregatedMetricName string
 	Rollup
+	Window
 }
 
 type Rollup struct {
 	Function          string
 	GroupedDimensions []string
+}
+
+type Window struct {
+	WindowSize int
+	WindowLag  int
 }
