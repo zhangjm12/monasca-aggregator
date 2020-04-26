@@ -211,8 +211,8 @@ func firstTick() *time.Timer {
 }
 
 func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.Consumer) {
-	// var currentTimeWindow = int64(time.Now().Unix()) / int64(windowSize.Seconds())
-	var currentTimeWindow = lastEventTime
+	var currentTimeWindow = int64(time.Now().Unix()) / int64(windowSize.Seconds())
+	// var currentTimeWindow = lastEventTime
 
 	// roof(windowLag / windowSize) i.e. number of windows in the lag time
 	var windowLagCount = int64(windowLag.Seconds()/windowSize.Seconds()) + 1
@@ -223,8 +223,8 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 	for index, rule := range aggregationRules {
 		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, baseActiveTimeWindow int64
 		if rule.WindowSize > 0 {
-			// ruleCurrentTimeWindow = int64(time.Now().Unix()) / int64(rule.WindowSize)
-			ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
+			ruleCurrentTimeWindow = int64(time.Now().Unix()) / int64(rule.WindowSize)
+			// ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
 			if rule.WindowLag > 0 {
 				ruleWindowLagCount = int64(rule.WindowLag/rule.WindowSize) + 1
 			} else {
