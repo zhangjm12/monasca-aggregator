@@ -253,7 +253,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 				continue
 			}
 
-			if windowTime > rule.LastWindow {
+			if windowTime > rule.LastWindow && windowTime <= ruleActiveTimeWindow {
 				for _, metric := range rule.GetMetrics(windowTime) {
 					metric.CreationTime = time.Now().Unix() * 1000
 					value, _ := json.Marshal(metric)
