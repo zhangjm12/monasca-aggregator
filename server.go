@@ -36,6 +36,9 @@ import (
 var windowSize time.Duration
 var windowLag time.Duration
 
+var windowSizeSecond int64
+var windowLagSecond int64
+
 var offsetCache = make(map[int64]map[int32]int64)
 
 //init global references to counters
@@ -211,39 +214,41 @@ func firstTick() *time.Timer {
 }
 
 func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.Consumer) {
-	var currentTimeWindow = int64(time.Now().Unix()) / int64(windowSize.Seconds())
+	var currentTime = time.Now().Unix()
+	var currentTimeWindow = currentTime / windowSizeSecond
 	// var currentTimeWindow = lastEventTime
 
 	// roof(windowLag / windowSize) i.e. number of windows in the lag time
-	var windowLagCount = int64(windowLag.Seconds()/windowSize.Seconds()) + 1
-	var activeTimeWindow = currentTimeWindow - windowLagCount
+	var windowLagCount int64 = (windowLagSecond-1)/windowSizeSecond + 1
+	var activeTimeWindow = currentTimeWindow - windowLagCount - 1
 	log.Debugf("currentTimeWindow: %d", currentTimeWindow)
 	log.Debugf("Publishing metrics in window %d", activeTimeWindow)
 
 	for index, rule := range aggregationRules {
-		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, baseActiveTimeWindow int64
+		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, ruleRemain, times int64
 		if rule.WindowSize > 0 {
-			ruleCurrentTimeWindow = int64(time.Now().Unix()) / int64(rule.WindowSize)
+			times = int64(rule.WindowSize) / windowSizeSecond
+			ruleCurrentTimeWindow = currentTime / int64(rule.WindowSize)
+			ruleRemain = currentTimeWindow - ruleCurrentTimeWindow*times
 			// ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
 			if rule.WindowLag > 0 {
-				ruleWindowLagCount = int64(rule.WindowLag/rule.WindowSize) + 1
+				ruleWindowLagCount = int64(rule.WindowLag-1)/windowSizeSecond + 1
 			} else {
-				ruleWindowLagCount = int64(float64(windowLag.Seconds())/float64(rule.WindowSize)) + 1
+				ruleWindowLagCount = (windowLagSecond-1)/windowSizeSecond + 1
 			}
 		} else {
+			times = 1
 			ruleCurrentTimeWindow = currentTimeWindow
 			ruleWindowLagCount = windowLagCount
 		}
 
-		ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount
-		if rule.WindowSize > 0 {
-			baseActiveTimeWindow = int64(float64(ruleCurrentTimeWindow)*float64(rule.WindowSize)/windowSize.Seconds()) - ruleWindowLagCount
-			if activeTimeWindow > baseActiveTimeWindow {
-				activeTimeWindow = baseActiveTimeWindow
-			}
+		if ruleRemain >= ruleWindowLagCount%times {
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 1
+		} else {
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 2
 		}
 
-		if ruleCurrentTimeWindow <= rule.LastWindow {
+		if ruleActiveTimeWindow <= rule.LastWindow {
 			continue
 		}
 
@@ -253,7 +258,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 				continue
 			}
 
-			if windowTime > rule.LastWindow && windowTime <= ruleActiveTimeWindow {
+			if windowTime > rule.LastWindow {
 				for _, metric := range rule.GetMetrics(windowTime) {
 					metric.CreationTime = time.Now().Unix() * 1000
 					value, _ := json.Marshal(metric)
@@ -267,6 +272,9 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			}
 		}
 		aggregationRules[index].LastWindow = lastWindowTime
+		if ruleActiveTimeWindow*times < activeTimeWindow {
+			activeTimeWindow = ruleActiveTimeWindow * times
+		}
 	}
 
 	// TODO: Confirm messages published before committing offsets
@@ -327,7 +335,7 @@ func deleteInactiveTimeWindows(activeTimeWindow int64) {
 	log.Debugf("Deleteing windows older than %d", activeTimeWindow)
 	for _, rule := range aggregationRules {
 		for windowTime := range rule.Windows {
-			if windowTime <= activeTimeWindow {
+			if windowTime <= rule.LastWindow {
 				delete(rule.Windows, windowTime)
 			}
 		}
@@ -378,6 +386,8 @@ func processMessage(e *kafka.Message) {
 func main() {
 	windowSize = time.Duration(config.GetInt("WindowSize") * 1e9)
 	windowLag = time.Duration(config.GetInt("WindowLag") * 1e9)
+	windowSizeSecond = config.GetInt64("WindowSize")
+	windowLagSecond = config.GetInt64("WindowLag")
 	consumerTopic := config.GetString("consumerTopic")
 	producerTopic := config.GetString("producerTopic")
 
