@@ -219,7 +219,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 
 	// roof(windowLag / windowSize) i.e. number of windows in the lag time
 	var windowLagCount int64 = (windowLagSecond-1)/windowSizeSecond + 1
-	var activeTimeWindow = currentTimeWindow - windowLagCount
+	var activeTimeWindow = currentTimeWindow - windowLagCount - 1
 	log.Debugf("currentTimeWindow: %d", currentTimeWindow)
 	log.Debugf("Publishing metrics in window %d", activeTimeWindow)
 
@@ -241,7 +241,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			ruleWindowLagCount = windowLagCount
 		}
 
-		ruleActiveTimeWindow = ruleCurrentTimeWindow*times - ruleWindowLagCount
+		ruleActiveTimeWindow = (ruleCurrentTimeWindow-1)*times + ruleRemain - ruleWindowLagCount
 
 		if ruleCurrentTimeWindow <= rule.LastWindow {
 			continue
@@ -249,7 +249,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 
 		lastWindowTime := rule.LastWindow
 		for windowTime := range rule.Windows {
-			if windowTime*times >= ruleActiveTimeWindow+ruleRemain {
+			if windowTime*times > ruleActiveTimeWindow {
 				continue
 			}
 
