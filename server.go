@@ -243,17 +243,13 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 
 		ruleActiveTimeWindow = ruleCurrentTimeWindow*times - ruleWindowLagCount
 
-		if activeTimeWindow > ruleActiveTimeWindow {
-			activeTimeWindow = ruleActiveTimeWindow
-		}
-
 		if ruleCurrentTimeWindow <= rule.LastWindow {
 			continue
 		}
 
 		lastWindowTime := rule.LastWindow
 		for windowTime := range rule.Windows {
-			if windowTime*times-ruleRemain > ruleActiveTimeWindow {
+			if windowTime*times >= ruleActiveTimeWindow+ruleRemain {
 				continue
 			}
 
@@ -271,6 +267,9 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			}
 		}
 		aggregationRules[index].LastWindow = lastWindowTime
+		if lastWindowTime*times < activeTimeWindow {
+			activeTimeWindow = lastWindowTime*times
+		}
 	}
 
 	// TODO: Confirm messages published before committing offsets
