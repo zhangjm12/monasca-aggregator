@@ -214,7 +214,8 @@ func firstTick() *time.Timer {
 }
 
 func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.Consumer) {
-	var currentTimeWindow = time.Now().Unix() / windowSizeSecond
+	var currentTime = time.Now().Unix()
+	var currentTimeWindow = currentTime / windowSizeSecond
 	// var currentTimeWindow = lastEventTime
 
 	// roof(windowLag / windowSize) i.e. number of windows in the lag time
@@ -227,7 +228,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, ruleRemain, times int64
 		if rule.WindowSize > 0 {
 			times = int64(rule.WindowSize) / windowSizeSecond
-			ruleCurrentTimeWindow = time.Now().Unix() / int64(rule.WindowSize)
+			ruleCurrentTimeWindow = currentTime / int64(rule.WindowSize)
 			ruleRemain = currentTimeWindow - ruleCurrentTimeWindow*times
 			// ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
 			if rule.WindowLag > 0 {
@@ -241,15 +242,19 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			ruleWindowLagCount = windowLagCount
 		}
 
-		ruleActiveTimeWindow = (ruleCurrentTimeWindow-1)*times + ruleRemain - ruleWindowLagCount
+		if ruleRemain >= ruleWindowLagCount%times {
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 1
+		} else {
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 2
+		}
 
-		if ruleCurrentTimeWindow <= rule.LastWindow {
+		if ruleActiveTimeWindow <= rule.LastWindow {
 			continue
 		}
 
 		lastWindowTime := rule.LastWindow
 		for windowTime := range rule.Windows {
-			if windowTime*times > ruleActiveTimeWindow {
+			if windowTime > ruleActiveTimeWindow {
 				continue
 			}
 
@@ -267,8 +272,8 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			}
 		}
 		aggregationRules[index].LastWindow = lastWindowTime
-		if lastWindowTime*times < activeTimeWindow {
-			activeTimeWindow = lastWindowTime*times
+		if ruleActiveTimeWindow*times < activeTimeWindow {
+			activeTimeWindow = ruleActiveTimeWindow * times
 		}
 	}
 
@@ -329,8 +334,9 @@ func commitOffsets(offsetList map[int32]int64, topic *string, c *kafka.Consumer)
 func deleteInactiveTimeWindows(activeTimeWindow int64) {
 	log.Debugf("Deleteing windows older than %d", activeTimeWindow)
 	for _, rule := range aggregationRules {
+		times := int64(rule.WindowSize) / windowSizeSecond
 		for windowTime := range rule.Windows {
-			if windowTime <= activeTimeWindow {
+			if windowTime*times <= activeTimeWindow {
 				delete(rule.Windows, windowTime)
 			}
 		}
