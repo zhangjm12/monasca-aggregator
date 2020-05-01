@@ -334,9 +334,8 @@ func commitOffsets(offsetList map[int32]int64, topic *string, c *kafka.Consumer)
 func deleteInactiveTimeWindows(activeTimeWindow int64) {
 	log.Debugf("Deleteing windows older than %d", activeTimeWindow)
 	for _, rule := range aggregationRules {
-		times := int64(rule.WindowSize) / windowSizeSecond
 		for windowTime := range rule.Windows {
-			if windowTime*times <= activeTimeWindow {
+			if windowTime <= rule.LastWindow {
 				delete(rule.Windows, windowTime)
 			}
 		}
