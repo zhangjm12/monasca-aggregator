@@ -272,8 +272,10 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			}
 		}
 		aggregationRules[index].LastWindow = lastWindowTime
-		if ruleActiveTimeWindow*times < activeTimeWindow {
-			activeTimeWindow = ruleActiveTimeWindow * times
+
+		lastWindowTime = (ruleActiveTimeWindow+1)*times - 1
+		if lastWindowTime < activeTimeWindow {
+			activeTimeWindow = lastWindowTime
 		}
 	}
 
