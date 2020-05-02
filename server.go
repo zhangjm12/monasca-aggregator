@@ -436,7 +436,7 @@ func main() {
 			// if the window size has passed and no messages have been received, die in case
 			// https://issues.apache.org/jira/browse/KAFKA-3593 is occurring.
 			if time.Now().Sub(lastMessage) > windowSize {
-				log.Fatalf("No messages received since %v", lastMessage)
+				log.Infof("No messages received since %v", lastMessage)
 			}
 
 		case ev := <-c.Events():
