@@ -78,9 +78,9 @@ func (a *Rule) AddMetric(metricEnvelope models.MetricEnvelope, windowSize time.D
 		//TODO change create metric to handle new aggregation rule type
 		currentMetric = CreateMetricType(a.AggregationSpecification, metricEnvelope)
 		if a.WindowSize > 0 {
-			currentMetric.SetTimestamp(float64(eventTime * 1000 * int64(a.WindowSize)))
+			currentMetric.SetTimestamp(float64((eventTime + 1) * 1000 * int64(a.WindowSize)))
 		} else {
-			currentMetric.SetTimestamp(float64(eventTime * 1000 * int64(windowSize.Seconds())))
+			currentMetric.SetTimestamp(float64((eventTime + 1) * 1000 * int64(windowSize.Seconds())))
 		}
 	} else {
 		currentMetric.UpdateValue(metricEnvelope)
