@@ -33,12 +33,6 @@ import (
 	"github.com/monasca/monasca-aggregator/models"
 )
 
-var windowSize time.Duration
-var windowLag time.Duration
-
-var windowSizeSecond int64
-var windowLagSecond int64
-
 var offsetCache = make(map[int64]map[int32]int64)
 
 //init global references to counters
@@ -53,9 +47,17 @@ var outCounter = prometheus.NewCounter(
 
 // This is a workaround to handle https://issues.apache.org/jira/browse/KAFKA-3593
 var lastMessage = time.Now()
-var lastEventTime int64
+var startMessage = time.Now()
 
 var config = initConfig()
+
+var windowSize = time.Duration(config.GetInt("WindowSize") * 1e9)
+var windowLag = time.Duration(config.GetInt("WindowLag") * 1e9)
+var windowSlide = time.Duration(config.GetInt("WindowSlide") * 1e9)
+var windowSizeSecond = config.GetInt64("WindowSize")
+var windowLagSecond = config.GetInt64("WindowLag")
+var windowSlideSecond = config.GetInt64("WindowSlide")
+
 var aggregations = initAggregationSpecs()
 
 var aggregationRules = initAggregationRules(aggregations)
@@ -99,6 +101,7 @@ func initConfig() *viper.Viper {
 	config := viper.New()
 	config.SetDefault("windowSize", 10)
 	config.SetDefault("windowLag", 2)
+	config.SetDefault("windowSlide", 10)
 	config.SetDefault("consumerTopic", "metrics")
 	config.SetDefault("producerTopic", "metrics")
 	config.SetDefault("kafka.bootstrap.servers", "localhost:9092")
@@ -126,6 +129,18 @@ func initAggregationSpecs() []models.AggregationSpecification {
 	err = config.UnmarshalKey("aggregationSpecifications", &aggregations)
 	if err != nil {
 		log.Fatalf("Failed to parse aggregations: %s", err)
+	}
+
+	for i, spec := range aggregations {
+		if spec.WindowSize == 0 {
+			aggregations[i].WindowSize = int(windowSizeSecond)
+		}
+		if spec.WindowLag == 0 {
+			aggregations[i].WindowLag = int(windowLagSecond)
+		}
+		if spec.WindowSlide == 0 {
+			aggregations[i].WindowSlide = aggregations[i].WindowSize
+		}
 	}
 
 	return aggregations
@@ -226,26 +241,18 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 
 	for index, rule := range aggregationRules {
 		var ruleCurrentTimeWindow, ruleWindowLagCount, ruleActiveTimeWindow, ruleRemain, times int64
-		if rule.WindowSize > 0 {
-			times = int64(rule.WindowSize) / windowSizeSecond
-			ruleCurrentTimeWindow = currentTime / int64(rule.WindowSize)
-			ruleRemain = currentTimeWindow - ruleCurrentTimeWindow*times
-			// ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
-			if rule.WindowLag > 0 {
-				ruleWindowLagCount = int64(rule.WindowLag-1)/windowSizeSecond + 1
-			} else {
-				ruleWindowLagCount = (windowLagSecond-1)/windowSizeSecond + 1
-			}
-		} else {
-			times = 1
-			ruleCurrentTimeWindow = currentTimeWindow
-			ruleWindowLagCount = windowLagCount
-		}
+
+		times = int64(rule.WindowSlide) / windowSizeSecond
+		ruleCurrentTimeWindow = currentTime / int64(rule.WindowSlide)
+		ruleRemain = currentTimeWindow - ruleCurrentTimeWindow*times
+		// ruleCurrentTimeWindow = lastEventTime / int64(float64(rule.WindowSize)/windowSize.Seconds())
+
+		ruleWindowLagCount = int64(rule.WindowLag-1)/windowSizeSecond + 1
 
 		if ruleRemain >= ruleWindowLagCount%times {
-			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 1
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - int64(rule.WindowSize/rule.WindowSlide)
 		} else {
-			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 2
+			ruleActiveTimeWindow = ruleCurrentTimeWindow - ruleWindowLagCount/times - 1 - int64(rule.WindowSize/rule.WindowSlide)
 		}
 
 		if ruleActiveTimeWindow <= rule.LastWindow {
@@ -259,6 +266,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 			}
 
 			if windowTime > rule.LastWindow {
+				//if time.Now().Sub(startMessage).Seconds() > float64(rule.WindowSize) {
 				for _, metric := range rule.GetMetrics(windowTime) {
 					metric.CreationTime = time.Now().Unix() * 1000
 					value, _ := json.Marshal(metric)
@@ -266,6 +274,7 @@ func publishAggregations(outbound chan *kafka.Message, topic *string, c *kafka.C
 					outbound <- &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: topic, Partition: kafka.PartitionAny}, Value: []byte(value)}
 					outCounter.Inc()
 				}
+				// }
 				if windowTime > lastWindowTime {
 					lastWindowTime = windowTime
 				}
@@ -360,7 +369,7 @@ func processMessage(e *kafka.Message) {
 
 	for _, rule := range aggregationRules {
 		if rule.MatchesMetric(metricEnvelope) {
-			rule.AddMetric(metricEnvelope, windowSize)
+			rule.AddMetric(metricEnvelope)
 		}
 	}
 
@@ -374,11 +383,6 @@ func processMessage(e *kafka.Message) {
 
 	inCounter.Inc()
 	lastMessage = time.Now()
-
-	if eventTime > lastEventTime {
-		lastEventTime = eventTime
-	}
-
 }
 
 // TODO: Add validation for aggregation rules (and metrics?)
@@ -386,10 +390,6 @@ func processMessage(e *kafka.Message) {
 // TODO: Allow start/end consumer offsets to be specified as parameters.
 // TODO: Allow start/end aggregation period to be specified.
 func main() {
-	windowSize = time.Duration(config.GetInt("WindowSize") * 1e9)
-	windowLag = time.Duration(config.GetInt("WindowLag") * 1e9)
-	windowSizeSecond = config.GetInt64("WindowSize")
-	windowLagSecond = config.GetInt64("WindowLag")
 	consumerTopic := config.GetString("consumerTopic")
 	producerTopic := config.GetString("producerTopic")
 

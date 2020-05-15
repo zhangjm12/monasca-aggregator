@@ -16,7 +16,6 @@ package aggregation
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/monasca/monasca-aggregator/models"
 	log "github.com/sirupsen/logrus"
@@ -48,44 +47,40 @@ func NewAggregationRule(aggSpec models.AggregationSpecification) (Rule, error) {
 	}, nil
 }
 
-func (a *Rule) AddMetric(metricEnvelope models.MetricEnvelope, windowSize time.Duration) {
+func (a *Rule) AddMetric(metricEnvelope models.MetricEnvelope) {
 	log.Debugf("Adding metric to %s", a.Name)
 	var eventTime int64
-	if a.WindowSize > 0 {
-		eventTime = int64(metricEnvelope.Metric.Timestamp / float64(1000*int64(a.WindowSize)))
-	} else {
-		eventTime = int64(metricEnvelope.Metric.Timestamp / float64(1000*int64(windowSize.Seconds())))
-	}
+	var len = a.WindowSize / a.WindowSlide
 
-	_, exists := a.Windows[eventTime]
-	if !exists {
-		a.Windows[eventTime] = NewWindow()
-	}
+	for i := 0; i < len; i++ {
+		eventTime = int64(metricEnvelope.Metric.Timestamp/float64(1000*int64(a.WindowSlide))) - int64(i)
 
-	aggregationKey := metricEnvelope.Meta["tenantId"]
-
-	// make the key unique for the supplied groupings
-	if a.GroupedDimensions != nil {
-		for _, key := range a.GroupedDimensions {
-			aggregationKey += "," + key + ":" + metricEnvelope.Metric.Dimensions[key]
+		_, exists := a.Windows[eventTime]
+		if !exists {
+			a.Windows[eventTime] = NewWindow()
 		}
-	}
-	log.Debugf("Storing key %s at %d", aggregationKey, eventTime)
 
-	currentMetric, exists := a.Windows[eventTime][aggregationKey]
-	// create a new metric if one did not exist
-	if !exists {
-		//TODO change create metric to handle new aggregation rule type
-		currentMetric = CreateMetricType(a.AggregationSpecification, metricEnvelope)
-		if a.WindowSize > 0 {
-			currentMetric.SetTimestamp(float64((eventTime + 1) * 1000 * int64(a.WindowSize)))
+		aggregationKey := metricEnvelope.Meta["tenantId"]
+
+		// make the key unique for the supplied groupings
+		if a.GroupedDimensions != nil {
+			for _, key := range a.GroupedDimensions {
+				aggregationKey += "," + key + ":" + metricEnvelope.Metric.Dimensions[key]
+			}
+		}
+		log.Debugf("Storing key %s at %d", aggregationKey, eventTime)
+
+		currentMetric, exists := a.Windows[eventTime][aggregationKey]
+		// create a new metric if one did not exist
+		if !exists {
+			//TODO change create metric to handle new aggregation rule type
+			currentMetric = CreateMetricType(a.AggregationSpecification, metricEnvelope)
+			currentMetric.SetTimestamp(float64(eventTime*1000*int64(a.WindowSlide) + int64(a.WindowSize)*1000))
 		} else {
-			currentMetric.SetTimestamp(float64((eventTime + 1) * 1000 * int64(windowSize.Seconds())))
+			currentMetric.UpdateValue(metricEnvelope)
 		}
-	} else {
-		currentMetric.UpdateValue(metricEnvelope)
+		a.Windows[eventTime][aggregationKey] = currentMetric
 	}
-	a.Windows[eventTime][aggregationKey] = currentMetric
 }
 
 func (a *Rule) GetMetrics(eventTime int64) []models.MetricEnvelope {

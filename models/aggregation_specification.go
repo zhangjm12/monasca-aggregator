@@ -32,6 +32,7 @@ type Rollup struct {
 }
 
 type Window struct {
-	WindowSize int
-	WindowLag  int
+	WindowSize  int
+	WindowLag   int
+	WindowSlide int
 }
